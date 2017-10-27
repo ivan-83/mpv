@@ -2,7 +2,7 @@
 
    dvbstream
    (C) Dave Chapman <dave@dchapman.com> 2001, 2002.
-   (C) Rozhuk Ivan <rozhuk.im@gmail.com> 2016
+   (C) Rozhuk Ivan <rozhuk.im@gmail.com> 2016 - 2017
 
    Original authors: Nico, probably Arpi
 
@@ -62,7 +62,6 @@
 #error GPL only
 #endif
 
-#define MAX_ADAPTERS 16
 #define CHANNEL_LINE_LEN 256
 #define min(a, b) ((a) <= (b) ? (a) : (b))
 
@@ -793,7 +792,7 @@ int dvb_set_channel(stream_t *stream, unsigned int adapter, unsigned int n)
         while (dvb_streaming_read(stream, buf, sizeof(buf)) > 0) {}
         if (state->cur_adapter != adapter) {
             dvbin_close(stream);
-            if (!dvb_open_devices(priv, devno, channel->pids_cnt)) {
+            if (!dvb_open_devices(priv, devno, channel->delsys, channel->pids_cnt)) {
                 MP_ERR(stream, "DVB_SET_CHANNEL, COULDN'T OPEN DEVICES OF "
                        "ADAPTER: %d, EXIT\n", devno);
                 return 0;
@@ -805,7 +804,7 @@ int dvb_set_channel(stream_t *stream, unsigned int adapter, unsigned int n)
                 return 0;
         }
     } else {
-        if (!dvb_open_devices(priv, devno, channel->pids_cnt)) {
+        if (!dvb_open_devices(priv, devno, channel->delsys, channel->pids_cnt)) {
             MP_ERR(stream, "DVB_SET_CHANNEL2, COULDN'T OPEN DEVICES OF "
                    "ADAPTER: %d, EXIT\n", devno);
             return 0;
@@ -1169,75 +1168,74 @@ dvb_state_t *dvb_get_state(stream_t *stream)
     state->switching_channel = false;
     state->stream_used = true;
     state->fe_fd = state->dvr_fd = -1;
-    for (int i = 0; i < MAX_ADAPTERS; i++) {
-        snprintf(filename, sizeof(filename), "/dev/dvb/adapter%d/frontend0", i);
-        int fd = open(filename, O_RDONLY | O_NONBLOCK | O_CLOEXEC);
-        if (fd < 0) {
-            mp_verbose(log, "DVB_CONFIG, can't open device %s, skipping\n",
-                       filename);
-            continue;
-        }
-
-        mp_verbose(log, "Opened device %s, FD: %d\n", filename, fd);
-        delsys_mask = dvb_get_tuner_delsys_mask(fd, log);
-        delsys_mask &= DELSYS_SUPP_MASK; /* Filter unsupported delivery systems. */
-        close(fd);
-        if (delsys_mask == 0) {
-            mp_verbose(log, "Frontend device %s has no supported delivery systems.\n",
-                       filename);
-            continue; /* Skip tuner. */
-        }
-        mp_verbose(log, "Frontend device %s offers some supported delivery systems.\n",
-                   filename);
-        /* Create channel list for adapter. */
+    for (unsigned int i = 0; i < MAX_ADAPTERS; i++) {
         list = NULL;
-        for (delsys = 0; delsys < SYS_DVB__COUNT__; delsys++) {
-            if (!DELSYS_IS_SET(delsys_mask, delsys))
-                continue; /* Skip unsupported. */
-
-            switch (delsys) {
-            case SYS_DVBC_ANNEX_A:
-            case SYS_DVBC_ANNEX_C:
-                conf_file_name = "channels.conf.cbl";
-                break;
-            case SYS_ATSC:
-                conf_file_name = "channels.conf.atsc";
-                break;
-            case SYS_DVBT:
-                if (DELSYS_IS_SET(delsys_mask, SYS_DVBT2))
-                    continue; /* Add all channels later with T2. */
-                /* PASSTOUTH */
-            case SYS_DVBT2:
-                conf_file_name = "channels.conf.ter";
-                break;
-            case SYS_DVBS:
-                if (DELSYS_IS_SET(delsys_mask, SYS_DVBS2))
-                    continue; /* Add all channels later with S2. */
-                /* PASSTOUTH */
-            case SYS_DVBS2:
-                conf_file_name = "channels.conf.sat";
-                break;
-            default:
+        for (unsigned int f = 0; f < MAX_FRONTENDS; f++) {
+            snprintf(filename, sizeof(filename), "/dev/dvb/adapter%u/frontend%u", i, f);
+            int fd = open(filename, O_RDONLY | O_NONBLOCK | O_CLOEXEC);
+            if (fd < 0)
                 continue;
-            }
 
-            if (priv->cfg_file && priv->cfg_file[0]) {
-                talloc_ctx = NULL;
-                conf_file = priv->cfg_file;
-            } else {
-                talloc_ctx = talloc_new(NULL);
-                conf_file = mp_find_config_file(talloc_ctx, global, conf_file_name);
-                if (conf_file) {
-                    mp_verbose(log, "Ignoring other channels.conf files.\n");
-                } else {
-                    conf_file = mp_find_config_file(talloc_ctx, global,
-                                                    "channels.conf");
+            mp_verbose(log, "Opened device %s, FD: %d\n", filename, fd);
+            delsys_mask = dvb_get_tuner_delsys_mask(fd, log);
+            delsys_mask &= DELSYS_SUPP_MASK; /* Filter unsupported delivery systems. */
+            close(fd);
+            if (delsys_mask == 0) {
+                mp_verbose(log, "Frontend device %s has no supported delivery systems.\n",
+                       filename);
+                continue; /* Skip tuner. */
+            }
+            mp_verbose(log, "Frontend device %s offers some supported delivery systems.\n",
+                   filename);
+            /* Create channel list for adapter. */
+            for (delsys = 0; delsys < SYS_DVB__COUNT__; delsys++) {
+                if (!DELSYS_IS_SET(delsys_mask, delsys))
+                    continue; /* Skip unsupported. */
+
+                switch (delsys) {
+                case SYS_DVBC_ANNEX_A:
+                case SYS_DVBC_ANNEX_C:
+                    conf_file_name = "channels.conf.cbl";
+                    break;
+                case SYS_ATSC:
+                    conf_file_name = "channels.conf.atsc";
+                    break;
+                case SYS_DVBT:
+                    if (DELSYS_IS_SET(delsys_mask, SYS_DVBT2))
+                        continue; /* Add all channels later with T2. */
+                    /* PASSTOUTH */
+                case SYS_DVBT2:
+                    conf_file_name = "channels.conf.ter";
+                    break;
+                case SYS_DVBS:
+                    if (DELSYS_IS_SET(delsys_mask, SYS_DVBS2))
+                        continue; /* Add all channels later with S2. */
+                    /* PASSTOUTH */
+                case SYS_DVBS2:
+                    conf_file_name = "channels.conf.sat";
+                    break;
+                default:
+                    continue;
                 }
-            }
 
-            list = dvb_get_channels(log, list, priv->cfg_full_transponder, conf_file,
-                                    delsys, delsys_mask);
-            talloc_free(talloc_ctx);
+                if (priv->cfg_file && priv->cfg_file[0]) {
+                    talloc_ctx = NULL;
+                    conf_file = priv->cfg_file;
+                } else {
+                    talloc_ctx = talloc_new(NULL);
+                    conf_file = mp_find_config_file(talloc_ctx, global, conf_file_name);
+                    if (conf_file) {
+                        mp_verbose(log, "Ignoring other channels.conf files.\n");
+                    } else {
+                        conf_file = mp_find_config_file(talloc_ctx, global,
+                                        "channels.conf");
+                    }
+                }
+
+                list = dvb_get_channels(log, list, priv->cfg_full_transponder,
+                                        conf_file, delsys, delsys_mask);
+                talloc_free(talloc_ctx);
+            }
         }
         /* Add adapter with non zero channel list. */
         if (list == NULL)

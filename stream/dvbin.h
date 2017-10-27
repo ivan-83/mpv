@@ -26,6 +26,9 @@
 #include <linux/dvb/audio.h>
 #include <linux/dvb/version.h>
 
+#define MAX_ADAPTERS 16
+#define MAX_FRONTENDS 8
+
 #undef DVB_ATSC
 #if defined(DVB_API_VERSION_MINOR)
 
@@ -69,7 +72,7 @@ typedef struct {
     unsigned int freq, srate, diseqc;
     char pol;
     unsigned int tpid, dpid1, dpid2, progid, ca, pids[DMX_FILTER_SIZE], pids_cnt;
-    bool is_dvb_x2;
+    bool is_dvb_x2; /* Used only in dvb_get_channels() and parse_vdr_par_string(), use delsys. */
     unsigned int delsys;
     unsigned int stream_id;
     unsigned int service_id;
